@@ -78,7 +78,7 @@ function SignatureCanvas({ label, hasSignature }: { label: string; hasSignature:
 }
 
 function TimelineItem({ log, isLast }: { log: { operator: string; operatorRole: string; action: string; detail: string; timestamp: string }; isLast: boolean }) {
-  const isFlowAction = ['发送补签链接', '退回医生补备注', '标记线下纸质归档', '归档完成'].includes(log.action)
+  const isFlowAction = ['发送补签链接', '退回医生补备注', '标记线下纸质归档', '归档完成', '标记患者已补签', '标记医生已补说明', '标记项目已核对'].includes(log.action)
   const actionColorMap: Record<string, string> = {
     '创建同意书': 'bg-navy-300',
     '患者签署': 'bg-success-400',
@@ -87,6 +87,9 @@ function TimelineItem({ log, isLast }: { log: { operator: string; operatorRole: 
     '发送补签链接': 'bg-navy-400',
     '退回医生补备注': 'bg-amber-400',
     '标记线下纸质归档': 'bg-success-500',
+    '标记患者已补签': 'bg-success-400',
+    '标记医生已补说明': 'bg-success-400',
+    '标记项目已核对': 'bg-success-400',
   }
   return (
     <div className="flex gap-3">

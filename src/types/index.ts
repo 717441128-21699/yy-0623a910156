@@ -3,6 +3,8 @@ export type ExceptionType = 'missing_patient_signature' | 'missing_doctor_note' 
 export type ArchiveStatus = 'pending' | 'archived' | 'offline_archived'
 export type Urgency = 'high' | 'medium' | 'low'
 export type ExceptionStatus = 'pending' | 'processing' | 'resolved'
+export type MismatchStatus = 'pending' | 'corrected' | 'archived'
+export type UnconfirmedStatus = 'pending' | 'confirmed' | 'archived'
 
 export interface ConsentRecord {
   id: string
@@ -20,6 +22,8 @@ export interface ConsentRecord {
   createdAt: string
   exceptionType: ExceptionType | null
   archiveStatus: ArchiveStatus
+  mismatchHandled?: boolean
+  unconfirmedHandled?: boolean
 }
 
 export interface ExceptionItem {
@@ -81,4 +85,37 @@ export interface ClosingCategory {
   color: string
   bgColor: string
   borderColor: string
+}
+
+export interface DailyReportItem {
+  recordId: string
+  patientName: string
+  treatmentItem: string
+  doctorName: string
+  category: 'unsigned' | 'mismatch' | 'unconfirmed' | 'outdated'
+  action: string
+  operator: string
+  operatorRole: string
+  timestamp: string
+  note: string
+}
+
+export interface DailyReport {
+  id: string
+  date: string
+  generatedAt: string
+  generatedBy: string
+  generatedByRole: string
+  totalRecords: number
+  pendingExceptions: number
+  unsignedCount: number
+  unsignedResolved: number
+  mismatchCount: number
+  mismatchResolved: number
+  unconfirmedCount: number
+  unconfirmedResolved: number
+  outdatedCount: number
+  outdatedResolved: number
+  actionSummary: DailyReportItem[]
+  operatorSummary: { name: string; role: string; count: number }[]
 }
