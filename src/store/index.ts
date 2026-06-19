@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { ConsentRecord, ExceptionItem, OperationLog, SignatureInfo, FilterState, ExceptionType, FlowRecord, DailyReport } from '@/types'
+import type { ConsentRecord, ExceptionItem, OperationLog, SignatureInfo, FilterState, ExceptionType, FlowRecord, DailyReport, ReminderRecord, PendingExceptionDetail } from '@/types'
 import { consentRecords, exceptionItems, operationLogs, signatureInfos } from '@/utils/mockData'
 
 function isSameDay(iso: string, dateStr: string): boolean {
@@ -18,6 +18,7 @@ interface AppState {
   logs: Record<string, OperationLog[]>
   signatures: Record<string, SignatureInfo>
   flowRecords: FlowRecord[]
+  reminderRecords: ReminderRecord[]
   dailyReports: DailyReport[]
   filters: FilterState
   selectedRecords: Set<string>
@@ -40,8 +41,16 @@ interface AppState {
   markDoctorNoted: (exceptionId: string, note: string) => void
   markMismatchHandled: (recordId: string, note: string) => void
   markUnconfirmedHandled: (recordId: string, note: string) => void
+  sendReminder: (exceptionId: string, note: string) => void
   generateDailyReport: (dateStr: string, operator: string, operatorRole: string) => DailyReport | null
   getReportByDate: (dateStr: string) => DailyReport | undefined
+  getPendingExceptionDetails: (dateStr: string) => PendingExceptionDetail[]
+  getReviewDashboard: (mode: 'week' | 'month', anchorDate: string) => {
+    days: { date: string; label: string; totalRecords: number; pendingExceptions: number; closed: boolean; report?: DailyReport }[]
+    doctorStats: { name: string; total: number; resolved: number; categories: Record<string, number> }[]
+    itemStats: { name: string; total: number; resolved: number }[]
+    categoryTrend: { date: string; unsigned: number; mismatch: number; unconfirmed: number; outdated: number }[]
+  }
 
   getFilteredRecords: () => ConsentRecord[]
   getRecordById: (id: string) => ConsentRecord | undefined
@@ -61,6 +70,7 @@ interface AppState {
     outdatedResolved: number
     allResolved: boolean
     totalRecordsOnDate: number
+    pendingExceptionDetails: PendingExceptionDetail[]
   }
 }
 
@@ -130,6 +140,7 @@ export const useAppStore = create<AppState>()(
       logs: operationLogs,
       signatures: signatureInfos,
       flowRecords: [],
+      reminderRecords: [],
       dailyReports: [],
       filters: { ...defaultFilters },
       selectedRecords: new Set<string>(),
@@ -390,10 +401,60 @@ export const useAppStore = create<AppState>()(
           return { records: updatedRecords, flowRecords: [...s.flowRecords, flowRecord] }
         }),
 
+      sendReminder: (exceptionId, note) =>
+        set((s) => {
+          const now = new Date().toISOString()
+          const ex = s.exceptions.find(e => e.id === exceptionId)
+          if (!ex) return s
+          const type: 'resign' | 'doctor_note' = ex.type === 'missing_patient_signature' ? 'resign' : 'doctor_note'
+
+          const existingFlowIndex = s.flowRecords.findIndex(
+            f => f.exceptionId === exceptionId &&
+              (f.action === '发送补签链接' || f.action === '退回医生补备注')
+          )
+
+          const nextFlowRecords = [...s.flowRecords]
+          if (existingFlowIndex >= 0) {
+            const existing = nextFlowRecords[existingFlowIndex]
+            nextFlowRecords[existingFlowIndex] = {
+              ...existing,
+              reminderCount: (existing.reminderCount || 0) + 1,
+              lastReminderAt: now,
+            }
+          }
+
+          const reminderRecord: ReminderRecord = {
+            id: `RM-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            exceptionId,
+            recordId: ex.recordId,
+            type,
+            operator: '张管理',
+            operatorRole: '病案管理员',
+            note,
+            timestamp: now,
+          }
+
+          const flowRecord: FlowRecord = {
+            id: `FR-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            exceptionId,
+            recordId: ex.recordId,
+            action: type === 'resign' ? '再次发送补签提醒' : '再次提醒医生补备注',
+            operator: '张管理',
+            operatorRole: '病案管理员',
+            note,
+            timestamp: now,
+          }
+
+          return {
+            flowRecords: [...nextFlowRecords, flowRecord],
+            reminderRecords: [...s.reminderRecords, reminderRecord],
+          }
+        }),
+
       generateDailyReport: (dateStr, operator, operatorRole) => {
         const state = get()
         const closing = state.getClosingData(dateStr)
-        if (!closing.allResolved) return null
+        const pendingDetails = state.getPendingExceptionDetails(dateStr)
 
         const actionSummary: DailyReport['actionSummary'] = []
         const operatorMap = new Map<string, { name: string; role: string; count: number }>()
@@ -438,7 +499,7 @@ export const useAppStore = create<AppState>()(
           generatedBy: operator,
           generatedByRole: operatorRole,
           totalRecords: closing.totalRecordsOnDate,
-          pendingExceptions: 0,
+          pendingExceptions: pendingDetails.length,
           unsignedCount: closing.unsigned.length,
           unsignedResolved: closing.unsignedResolved,
           mismatchCount: closing.mismatch.length,
@@ -449,6 +510,7 @@ export const useAppStore = create<AppState>()(
           outdatedResolved: closing.outdatedResolved,
           actionSummary,
           operatorSummary: Array.from(operatorMap.values()),
+          pendingExceptionDetails: pendingDetails,
         }
 
         set((s) => ({
@@ -458,6 +520,118 @@ export const useAppStore = create<AppState>()(
       },
 
       getReportByDate: (dateStr) => get().dailyReports.find(dr => dr.date === dateStr),
+
+      getPendingExceptionDetails: (dateStr) => {
+        const state = get()
+        const closing = state.getClosingData(dateStr)
+        const details: PendingExceptionDetail[] = []
+
+        function getStuckStep(r: ConsentRecord, category: string): string {
+          const relatedFlows = state.flowRecords
+            .filter(f => f.recordId === r.id)
+            .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+          if (category === 'unsigned') {
+            const resignedFlow = relatedFlows.find(f => f.action === '发送补签链接')
+            if (resignedFlow) return '已发送补签链接，等待患者补签'
+            return '待发送补签链接'
+          }
+          if (category === 'mismatch') {
+            return '项目不一致，待核对处理'
+          }
+          if (category === 'unconfirmed') {
+            const returnFlow = relatedFlows.find(f => f.action === '退回医生补备注')
+            if (returnFlow) return '已退回医生，等待补填说明'
+            return '待退回医生补备注'
+          }
+          if (category === 'outdated') {
+            return '模板过旧，待线下归档处理'
+          }
+          return '待处理'
+        }
+
+        function getLastActionAt(r: ConsentRecord): string {
+          const related = state.flowRecords.filter(f => f.recordId === r.id)
+          if (related.length === 0) return r.createdAt
+          return related.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0].timestamp
+        }
+
+        function getReminderInfo(r: ConsentRecord) {
+          const relatedFlows = state.flowRecords.filter(f => f.recordId === r.id)
+          const mainFlow = relatedFlows.find(f => f.action === '发送补签链接' || f.action === '退回医生补备注')
+          if (mainFlow) {
+            return {
+              count: mainFlow.reminderCount || 0,
+              last: mainFlow.lastReminderAt || null,
+            }
+          }
+          return { count: 0, last: null }
+        }
+
+        closing.unsigned.forEach(r => {
+          if (!isUnsignedResolved(r, state.exceptions, state.flowRecords)) {
+            const reminder = getReminderInfo(r)
+            details.push({
+              recordId: r.id,
+              patientName: r.patientName,
+              treatmentItem: r.treatmentItem,
+              doctorName: r.doctorName,
+              category: 'unsigned',
+              stuckStep: getStuckStep(r, 'unsigned'),
+              lastActionAt: getLastActionAt(r),
+              reminderCount: reminder.count,
+              lastReminderAt: reminder.last,
+            })
+          }
+        })
+        closing.mismatch.forEach(r => {
+          if (!isMismatchResolved(r, state.exceptions, state.flowRecords)) {
+            details.push({
+              recordId: r.id,
+              patientName: r.patientName,
+              treatmentItem: r.treatmentItem,
+              doctorName: r.doctorName,
+              category: 'mismatch',
+              stuckStep: getStuckStep(r, 'mismatch'),
+              lastActionAt: getLastActionAt(r),
+              reminderCount: 0,
+              lastReminderAt: null,
+            })
+          }
+        })
+        closing.unconfirmed.forEach(r => {
+          if (!isUnconfirmedResolved(r, state.exceptions, state.flowRecords)) {
+            const reminder = getReminderInfo(r)
+            details.push({
+              recordId: r.id,
+              patientName: r.patientName,
+              treatmentItem: r.treatmentItem,
+              doctorName: r.doctorName,
+              category: 'unconfirmed',
+              stuckStep: getStuckStep(r, 'unconfirmed'),
+              lastActionAt: getLastActionAt(r),
+              reminderCount: reminder.count,
+              lastReminderAt: reminder.last,
+            })
+          }
+        })
+        closing.outdated.forEach(r => {
+          if (!isOutdatedResolved(r, state.exceptions, state.flowRecords)) {
+            details.push({
+              recordId: r.id,
+              patientName: r.patientName,
+              treatmentItem: r.treatmentItem,
+              doctorName: r.doctorName,
+              category: 'outdated',
+              stuckStep: getStuckStep(r, 'outdated'),
+              lastActionAt: getLastActionAt(r),
+              reminderCount: 0,
+              lastReminderAt: null,
+            })
+          }
+        })
+
+        return details
+      },
 
       getFilteredRecords: () => {
         const { records, filters } = get()
@@ -545,6 +719,92 @@ export const useAppStore = create<AppState>()(
         }
       },
 
+      getReviewDashboard: (mode, anchorDate) => {
+        const state = get()
+        const anchor = new Date(anchorDate + 'T00:00:00')
+        const dayCount = mode === 'week' ? 7 : 30
+        const days: ReturnType<AppState['getReviewDashboard']>['days'] = []
+
+        for (let i = dayCount - 1; i >= 0; i--) {
+          const d = new Date(anchor)
+          d.setDate(d.getDate() - i)
+          const dateStr = d.toISOString().slice(0, 10)
+          const closing = state.getClosingData(dateStr)
+          const report = state.dailyReports.find(dr => dr.date === dateStr)
+          const label = `${d.getMonth() + 1}/${d.getDate()}`
+          const pending = closing.pendingExceptionDetails.length
+          days.push({
+            date: dateStr,
+            label,
+            totalRecords: closing.totalRecordsOnDate,
+            pendingExceptions: pending,
+            closed: closing.allResolved,
+            report,
+          })
+        }
+
+        const doctorMap = new Map<string, { name: string; total: number; resolved: number; categories: Record<string, number> }>()
+        const itemMap = new Map<string, { name: string; total: number; resolved: number }>()
+
+        days.forEach(day => {
+          const closing = state.getClosingData(day.date)
+          const all = [...closing.unsigned, ...closing.mismatch, ...closing.unconfirmed, ...closing.outdated]
+          const unique = Array.from(new Map(all.map(r => [r.id, r])).values())
+          unique.forEach(r => {
+            if (!doctorMap.has(r.doctorName)) {
+              doctorMap.set(r.doctorName, { name: r.doctorName, total: 0, resolved: 0, categories: { unsigned: 0, mismatch: 0, unconfirmed: 0, outdated: 0 } })
+            }
+            const doc = doctorMap.get(r.doctorName)!
+            doc.total += 1
+
+            let cat: string | null = null
+            if (closing.unsigned.some(u => u.id === r.id)) {
+              cat = 'unsigned'
+              doc.categories.unsigned += 1
+              if (isUnsignedResolved(r, state.exceptions, state.flowRecords)) doc.resolved += 1
+            } else if (closing.mismatch.some(m => m.id === r.id)) {
+              cat = 'mismatch'
+              doc.categories.mismatch += 1
+              if (isMismatchResolved(r, state.exceptions, state.flowRecords)) doc.resolved += 1
+            } else if (closing.unconfirmed.some(u => u.id === r.id)) {
+              cat = 'unconfirmed'
+              doc.categories.unconfirmed += 1
+              if (isUnconfirmedResolved(r, state.exceptions, state.flowRecords)) doc.resolved += 1
+            } else if (closing.outdated.some(o => o.id === r.id)) {
+              cat = 'outdated'
+              doc.categories.outdated += 1
+              if (isOutdatedResolved(r, state.exceptions, state.flowRecords)) doc.resolved += 1
+            }
+
+            if (!itemMap.has(r.treatmentItem)) {
+              itemMap.set(r.treatmentItem, { name: r.treatmentItem, total: 0, resolved: 0 })
+            }
+            const item = itemMap.get(r.treatmentItem)!
+            item.total += 1
+            if (cat === 'unsigned' && isUnsignedResolved(r, state.exceptions, state.flowRecords)) item.resolved += 1
+            else if (cat === 'mismatch' && isMismatchResolved(r, state.exceptions, state.flowRecords)) item.resolved += 1
+            else if (cat === 'unconfirmed' && isUnconfirmedResolved(r, state.exceptions, state.flowRecords)) item.resolved += 1
+            else if (cat === 'outdated' && isOutdatedResolved(r, state.exceptions, state.flowRecords)) item.resolved += 1
+          })
+        })
+
+        const categoryTrend = days.map(day => {
+          const closing = state.getClosingData(day.date)
+          const un = closing.unsigned.filter(r => !isUnsignedResolved(r, state.exceptions, state.flowRecords)).length
+          const mm = closing.mismatch.filter(r => !isMismatchResolved(r, state.exceptions, state.flowRecords)).length
+          const uc = closing.unconfirmed.filter(r => !isUnconfirmedResolved(r, state.exceptions, state.flowRecords)).length
+          const od = closing.outdated.filter(r => !isOutdatedResolved(r, state.exceptions, state.flowRecords)).length
+          return { date: day.label, unsigned: un, mismatch: mm, unconfirmed: uc, outdated: od }
+        })
+
+        return {
+          days,
+          doctorStats: Array.from(doctorMap.values()).sort((a, b) => b.total - a.total),
+          itemStats: Array.from(itemMap.values()).sort((a, b) => b.total - a.total),
+          categoryTrend,
+        }
+      },
+
       getClosingData: (dateStr) => {
         const { records, exceptions, flowRecords } = get()
         const recordsOnDate = records.filter(r => isInDateRange(r.createdAt, dateStr))
@@ -564,6 +824,46 @@ export const useAppStore = create<AppState>()(
           (unconfirmed.length === 0 || unconfirmedResolved === unconfirmed.length) &&
           (outdated.length === 0 || outdatedResolved === outdated.length)
 
+        const pendingExceptionDetails: PendingExceptionDetail[] = []
+        function addDetail(r: ConsentRecord, category: PendingExceptionDetail['category'], stuck: string) {
+          const relatedFlows = flowRecords.filter(f => f.recordId === r.id)
+          const mainFlow = relatedFlows.find(f => f.action === '发送补签链接' || f.action === '退回医生补备注')
+          const lastAction = relatedFlows.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
+          pendingExceptionDetails.push({
+            recordId: r.id,
+            patientName: r.patientName,
+            treatmentItem: r.treatmentItem,
+            doctorName: r.doctorName,
+            category,
+            stuckStep: stuck,
+            lastActionAt: lastAction ? lastAction.timestamp : r.createdAt,
+            reminderCount: mainFlow?.reminderCount || 0,
+            lastReminderAt: mainFlow?.lastReminderAt || null,
+          })
+        }
+        unsigned.forEach(r => {
+          if (!isUnsignedResolved(r, exceptions, flowRecords)) {
+            const hasSent = flowRecords.some(f => f.recordId === r.id && f.action === '发送补签链接')
+            addDetail(r, 'unsigned', hasSent ? '已发送补签链接，等待患者补签' : '待发送补签链接')
+          }
+        })
+        mismatch.forEach(r => {
+          if (!isMismatchResolved(r, exceptions, flowRecords)) {
+            addDetail(r, 'mismatch', '项目不一致，待核对处理')
+          }
+        })
+        unconfirmed.forEach(r => {
+          if (!isUnconfirmedResolved(r, exceptions, flowRecords)) {
+            const hasSent = flowRecords.some(f => f.recordId === r.id && f.action === '退回医生补备注')
+            addDetail(r, 'unconfirmed', hasSent ? '已退回医生，等待补填说明' : '待退回医生补备注')
+          }
+        })
+        outdated.forEach(r => {
+          if (!isOutdatedResolved(r, exceptions, flowRecords)) {
+            addDetail(r, 'outdated', '模板过旧，待线下归档处理')
+          }
+        })
+
         return {
           unsigned,
           mismatch,
@@ -575,16 +875,18 @@ export const useAppStore = create<AppState>()(
           outdatedResolved,
           allResolved,
           totalRecordsOnDate: recordsOnDate.length,
+          pendingExceptionDetails,
         }
       },
     }),
     {
-      name: 'consent-archive-store-v2',
+      name: 'consent-archive-store-v3',
       partialize: (state) => ({
         records: state.records,
         exceptions: state.exceptions,
         logs: state.logs,
         flowRecords: state.flowRecords,
+        reminderRecords: state.reminderRecords,
         dailyReports: state.dailyReports,
       }),
     }

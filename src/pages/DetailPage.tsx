@@ -1,6 +1,7 @@
+import { useState, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '@/store'
-import { ArrowLeft, User, Stethoscope, FileText, Clock, AlertTriangle, PenTool, Shield, CheckCircle2, XCircle, MessageSquare } from 'lucide-react'
+import { ArrowLeft, User, Stethoscope, FileText, Clock, AlertTriangle, PenTool, Shield, CheckCircle2, XCircle, MessageSquare, Filter } from 'lucide-react'
 import type { SignStatus, ArchiveStatus, ExceptionType } from '@/types'
 
 const signStatusLabel: Record<SignStatus, { text: string; color: string }> = {
@@ -78,7 +79,7 @@ function SignatureCanvas({ label, hasSignature }: { label: string; hasSignature:
 }
 
 function TimelineItem({ log, isLast }: { log: { operator: string; operatorRole: string; action: string; detail: string; timestamp: string }; isLast: boolean }) {
-  const isFlowAction = ['发送补签链接', '退回医生补备注', '标记线下纸质归档', '归档完成', '标记患者已补签', '标记医生已补说明', '标记项目已核对'].includes(log.action)
+  const isFlowAction = ['发送补签链接', '退回医生补备注', '标记线下纸质归档', '归档完成', '标记患者已补签', '标记医生已补说明', '标记项目已核对', '再次发送补签提醒', '再次提醒医生补备注'].includes(log.action)
   const actionColorMap: Record<string, string> = {
     '创建同意书': 'bg-navy-300',
     '患者签署': 'bg-success-400',
@@ -90,6 +91,8 @@ function TimelineItem({ log, isLast }: { log: { operator: string; operatorRole: 
     '标记患者已补签': 'bg-success-400',
     '标记医生已补说明': 'bg-success-400',
     '标记项目已核对': 'bg-success-400',
+    '再次发送补签提醒': 'bg-danger-400',
+    '再次提醒医生补备注': 'bg-danger-400',
   }
   return (
     <div className="flex gap-3">
@@ -129,11 +132,22 @@ export default function DetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { getRecordById, getSignatureInfo, getRecordLogs, getFlowRecordsByRecord, exceptions } = useAppStore()
+  const [filterExceptionFlows, setFilterExceptionFlows] = useState(false)
 
   const record = getRecordById(id || '')
   const signatureInfo = getSignatureInfo(id || '')
   const logs = getRecordLogs(id || '')
   const flowRecords = getFlowRecordsByRecord(id || '')
+
+  const exceptionFlowActions = new Set([
+    '发送补签链接', '退回医生补备注', '标记线下纸质归档', '标记患者已补签',
+    '标记医生已补说明', '标记项目已核对', '再次发送补签提醒', '再次提醒医生补备注', '归档完成',
+  ])
+
+  const displayLogs = useMemo(() => {
+    if (!filterExceptionFlows) return logs
+    return logs.filter(log => exceptionFlowActions.has(log.action))
+  }, [logs, filterExceptionFlows, exceptionFlowActions])
 
   if (!record) {
     return (
@@ -317,17 +331,34 @@ export default function DetailPage() {
           </div>
 
           <div className="card px-5 py-4">
-            <div className="flex items-center gap-2 mb-4">
-              <Clock className="h-4 w-4 text-navy-300" />
-              <span className="text-sm font-medium text-navy-500">操作记录</span>
-              {flowRecords.length > 0 && (
-                <span className="badge bg-navy-50 text-navy-300 ml-1">{flowRecords.length}条流转</span>
-              )}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Clock className="h-4 w-4 text-navy-300" />
+                <span className="text-sm font-medium text-navy-500">操作记录</span>
+                {flowRecords.length > 0 && (
+                  <span className="badge bg-navy-50 text-navy-300 ml-1">{flowRecords.length}条流转</span>
+                )}
+              </div>
+              <button
+                className={`inline-flex items-center gap-1 text-2xs px-2 py-1 rounded transition-colors ${
+                  filterExceptionFlows
+                    ? 'bg-navy-500 text-white'
+                    : 'bg-slate-25 text-navy-300 hover:text-navy-500 border border-slate-100'
+                }`}
+                onClick={() => setFilterExceptionFlows(!filterExceptionFlows)}
+              >
+                <Filter className="h-3 w-3" />
+                {filterExceptionFlows ? '显示全部' : '仅看异常流转'}
+              </button>
             </div>
             <div className="space-y-0">
-              {logs.map((log, i) => (
-                <TimelineItem key={log.id} log={log} isLast={i === logs.length - 1} />
-              ))}
+              {displayLogs.length === 0 ? (
+                <p className="text-xs text-navy-200 text-center py-4">暂无相关记录</p>
+              ) : (
+                displayLogs.map((log, i) => (
+                  <TimelineItem key={log.id} log={log} isLast={i === displayLogs.length - 1} />
+                ))
+              )}
             </div>
           </div>
 

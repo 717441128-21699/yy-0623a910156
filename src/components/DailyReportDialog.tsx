@@ -51,6 +51,8 @@ export default function DailyReportDialog({ open, report, history, onClose, onSe
         .sec{font-size:14px;font-weight:600;margin:20px 0 8px;padding-bottom:4px;border-bottom:2px solid #1B2A4A}
         .ops{display:flex;gap:12px;flex-wrap:wrap}
         .op{background:#F5F6FA;padding:8px 12px;border-radius:6px;font-size:12px}
+        .danger{color:#D32F2F}
+        .warn{color:#D4913D}
       </style></head><body>
       ${printRef.current.innerHTML}
       </body></html>
@@ -68,9 +70,27 @@ export default function DailyReportDialog({ open, report, history, onClose, onSe
     lines.push(`经办人：${report.generatedBy}（${report.generatedByRole}）`)
     lines.push('')
     lines.push(`总记录数：${report.totalRecords}`)
+    lines.push(`未处理异常：${report.pendingExceptions}项`)
     lines.push(`未签署：${report.unsignedResolved}/${report.unsignedCount}  项目不一致：${report.mismatchResolved}/${report.mismatchCount}`)
     lines.push(`医生未确认：${report.unconfirmedResolved}/${report.unconfirmedCount}  模板过旧：${report.outdatedResolved}/${report.outdatedCount}`)
     lines.push('')
+    if (report.pendingExceptionDetails && report.pendingExceptionDetails.length > 0) {
+      lines.push('【未处理异常明细】')
+      lines.push('患者,治疗项目,医生,问题类别,卡在哪一步,最后处理时间,催办次数,最后催办时间')
+      report.pendingExceptionDetails.forEach(d => {
+        lines.push([
+          d.patientName,
+          d.treatmentItem,
+          d.doctorName,
+          { unsigned: '未签署', mismatch: '项目不一致', unconfirmed: '医生未确认', outdated: '模板过旧' }[d.category],
+          d.stuckStep,
+          formatDT(d.lastActionAt),
+          d.reminderCount,
+          d.lastReminderAt ? formatDT(d.lastReminderAt) : '-',
+        ].join(','))
+      })
+      lines.push('')
+    }
     lines.push('【处理动作明细】')
     lines.push('时间,患者,治疗项目,医生,类别,处理动作,操作人,备注')
     report.actionSummary.forEach(a => {
@@ -180,16 +200,74 @@ export default function DailyReportDialog({ open, report, history, onClose, onSe
                   ))}
                 </div>
 
-                <div className="grid grid-cols-2 gap-3 mb-6">
+                <div className="grid grid-cols-3 gap-3 mb-6">
                   <div className="border border-slate-100 rounded px-3 py-3">
                     <p className="text-2xs text-navy-200 mb-1">模板过旧（完成/总数）</p>
                     <p className="text-base font-bold text-navy-500">{report.outdatedResolved}/{report.outdatedCount}</p>
                   </div>
-                  <div className="border border-success-100 rounded bg-success-50 px-3 py-3">
-                    <p className="text-2xs text-success-500 mb-1">关账结果</p>
-                    <p className="text-base font-bold text-success-500">全部完成 ✓</p>
+                  <div className={`border rounded px-3 py-3 ${
+                    report.pendingExceptions === 0
+                      ? 'border-success-100 bg-success-50'
+                      : 'border-danger-100 bg-danger-50'
+                  }`}>
+                    <p className={`text-2xs mb-1 ${report.pendingExceptions === 0 ? 'text-success-500' : 'text-danger-500'}`}>未处理异常</p>
+                    <p className={`text-base font-bold ${report.pendingExceptions === 0 ? 'text-success-500' : 'text-danger-500'}`}>
+                      {report.pendingExceptions === 0 ? '0 项 ✓' : `${report.pendingExceptions} 项`}
+                    </p>
+                  </div>
+                  <div className={`border rounded px-3 py-3 ${
+                    report.pendingExceptions === 0
+                      ? 'border-success-100 bg-success-50'
+                      : 'border-amber-100 bg-amber-50'
+                  }`}>
+                    <p className={`text-2xs mb-1 ${report.pendingExceptions === 0 ? 'text-success-500' : 'text-amber-400'}`}>关账结果</p>
+                    <p className={`text-base font-bold ${report.pendingExceptions === 0 ? 'text-success-500' : 'text-amber-400'}`}>
+                      {report.pendingExceptions === 0 ? '全部完成 ✓' : '待继续处理'}
+                    </p>
                   </div>
                 </div>
+
+                {report.pendingExceptionDetails && report.pendingExceptionDetails.length > 0 && (
+                  <>
+                    <p className="text-sm font-semibold text-danger-500 pb-1 border-b-2 border-danger-200 mb-3 inline-block">未处理异常明细</p>
+                    <div className="overflow-x-auto mb-6">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-danger-50">
+                            <th className="px-2 py-2 text-left font-medium text-danger-500">患者</th>
+                            <th className="px-2 py-2 text-left font-medium text-danger-500">治疗项目</th>
+                            <th className="px-2 py-2 text-left font-medium text-danger-500">医生</th>
+                            <th className="px-2 py-2 text-left font-medium text-danger-500">问题类别</th>
+                            <th className="px-2 py-2 text-left font-medium text-danger-500">卡在哪一步</th>
+                            <th className="px-2 py-2 text-left font-medium text-danger-500">最后处理时间</th>
+                            <th className="px-2 py-2 text-left font-medium text-danger-500">催办</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {report.pendingExceptionDetails.map((d, i) => (
+                            <tr key={i} className="border-t border-danger-50">
+                              <td className="px-2 py-1.5 text-navy-500">{d.patientName}</td>
+                              <td className="px-2 py-1.5 text-navy-400">{d.treatmentItem}</td>
+                              <td className="px-2 py-1.5 text-navy-400">{d.doctorName}</td>
+                              <td className="px-2 py-1.5 text-navy-300">{categoryLabel[d.category]}</td>
+                              <td className="px-2 py-1.5 text-amber-500 font-medium">{d.stuckStep}</td>
+                              <td className="px-2 py-1.5 text-navy-300">{formatDT(d.lastActionAt)}</td>
+                              <td className="px-2 py-1.5">
+                                {d.reminderCount > 0 ? (
+                                  <span className="text-danger-500 font-medium">
+                                    已催{d.reminderCount}次 · 最后{formatDT(d.lastReminderAt!)}
+                                  </span>
+                                ) : (
+                                  <span className="text-navy-200">未催办</span>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </>
+                )}
 
                 <p className="text-sm font-semibold text-navy-500 pb-1 border-b-2 border-navy-500 mb-3 inline-block">处理动作明细</p>
                 <div className="overflow-x-auto mb-6">

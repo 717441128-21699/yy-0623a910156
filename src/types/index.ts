@@ -48,6 +48,52 @@ export interface FlowRecord {
   operatorRole: string
   note: string
   timestamp: string
+  reminderCount?: number
+  lastReminderAt?: string
+}
+
+export interface ReminderRecord {
+  id: string
+  exceptionId: string
+  recordId: string
+  type: 'resign' | 'doctor_note'
+  operator: string
+  operatorRole: string
+  note: string
+  timestamp: string
+}
+
+export interface PendingExceptionDetail {
+  recordId: string
+  patientName: string
+  treatmentItem: string
+  doctorName: string
+  category: 'unsigned' | 'mismatch' | 'unconfirmed' | 'outdated'
+  stuckStep: string
+  lastActionAt: string
+  reminderCount: number
+  lastReminderAt: string | null
+}
+
+export interface DailyReport {
+  id: string
+  date: string
+  generatedAt: string
+  generatedBy: string
+  generatedByRole: string
+  totalRecords: number
+  pendingExceptions: number
+  unsignedCount: number
+  unsignedResolved: number
+  mismatchCount: number
+  mismatchResolved: number
+  unconfirmedCount: number
+  unconfirmedResolved: number
+  outdatedCount: number
+  outdatedResolved: number
+  actionSummary: DailyReportItem[]
+  operatorSummary: { name: string; role: string; count: number }[]
+  pendingExceptionDetails: PendingExceptionDetail[]
 }
 
 export interface OperationLog {

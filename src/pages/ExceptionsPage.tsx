@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useAppStore } from '@/store'
 import type { ExceptionType, ExceptionStatus, Urgency, FlowRecord } from '@/types'
-import { Send, ArrowLeftRight, Archive, CheckCircle2, Clock, AlertCircle, ChevronDown, ChevronRight, MessageSquare, UserCheck, Stethoscope } from 'lucide-react'
+import { Send, ArrowLeftRight, Archive, CheckCircle2, Clock, AlertCircle, ChevronDown, ChevronRight, MessageSquare, UserCheck, Stethoscope, Bell } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import NoteDialog from '@/components/NoteDialog'
 
@@ -31,13 +31,13 @@ const typeColorMap: Record<ExceptionType, string> = {
 
 type PendingAction =
   | { kind: 'resign' | 'return_doctor' | 'offline_archive'; exceptionId: string; recordId: string; title: string; label: string }
-  | { kind: 'mark_resigned' | 'mark_noted'; exceptionId: string; title: string; label: string }
+  | { kind: 'mark_resigned' | 'mark_noted' | 'reminder'; exceptionId: string; title: string; label: string }
 
 export default function ExceptionsPage() {
   const {
     exceptionTab, setExceptionTab, getExceptionsByType,
     sendResignLink, returnToDoctor, markOfflineArchivedWithNote,
-    flowRecords, exceptions, markPatientResigned, markDoctorNoted
+    flowRecords, exceptions, markPatientResigned, markDoctorNoted, sendReminder
   } = useAppStore()
   const navigate = useNavigate()
   const items = getExceptionsByType(exceptionTab)
@@ -65,7 +65,37 @@ export default function ExceptionsPage() {
     else if (pendingAction.kind === 'offline_archive') markOfflineArchivedWithNote(pendingAction.exceptionId, note)
     else if (pendingAction.kind === 'mark_resigned') markPatientResigned(pendingAction.exceptionId, note)
     else if (pendingAction.kind === 'mark_noted') markDoctorNoted(pendingAction.exceptionId, note)
+    else if (pendingAction.kind === 'reminder') sendReminder(pendingAction.exceptionId, note)
     setPendingAction(null)
+  }
+
+  function getReminderInfo(exceptionId: string) {
+    const mainFlow = flowRecords.find(f =>
+      f.exceptionId === exceptionId &&
+      (f.action === '发送补签链接' || f.action === '退回医生补备注')
+    )
+    const reminders = flowRecords.filter(f =>
+      f.exceptionId === exceptionId &&
+      (f.action === '再次发送补签提醒' || f.action === '再次提醒医生补备注')
+    )
+    const lastReminder = reminders.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())[0]
+
+    let isOverdue = false
+    let hoursSince = 0
+    if (mainFlow) {
+      const then = new Date(mainFlow.timestamp).getTime()
+      const now = new Date().getTime()
+      hoursSince = (now - then) / (1000 * 60 * 60)
+      isOverdue = hoursSince > 24
+    }
+
+    return {
+      count: mainFlow?.reminderCount || 0,
+      lastReminderAt: lastReminder?.timestamp || mainFlow?.lastReminderAt || null,
+      isOverdue,
+      hoursSince,
+      mainFlow,
+    }
   }
 
   function getFlowRecordsForException(exceptionId: string): FlowRecord[] {
@@ -121,11 +151,12 @@ export default function ExceptionsPage() {
             const isFlowExpanded = expandedFlow === item.id
             const resignedSent = hasFlowAction(item.id, '发送补签链接')
             const returnedSent = hasFlowAction(item.id, '退回医生补备注')
+            const reminderInfo = getReminderInfo(item.id)
 
             return (
               <div
                 key={item.id}
-                className="card overflow-hidden animate-fade-in-up"
+                className={`card overflow-hidden animate-fade-in-up ${reminderInfo.isOverdue && item.status !== 'resolved' ? 'border-l-4 border-l-danger-400' : ''}`}
                 style={{ animationDelay: `${i * 50}ms` }}
               >
                 <div className="flex">
@@ -142,6 +173,18 @@ export default function ExceptionsPage() {
                             <StatusIcon className={`h-3.5 w-3.5 ${statusMap[item.status].color}`} />
                             <span className={statusMap[item.status].color}>{statusMap[item.status].label}</span>
                           </span>
+                          {reminderInfo.isOverdue && item.status !== 'resolved' && (
+                            <span className="badge bg-danger-50 text-danger-500">
+                              <AlertCircle className="h-3 w-3 inline mr-0.5" />
+                              已超期 {Math.floor(reminderInfo.hoursSince / 24)}天
+                            </span>
+                          )}
+                          {reminderInfo.count > 0 && (
+                            <span className="badge bg-amber-50 text-amber-500">
+                              <Bell className="h-3 w-3 inline mr-0.5" />
+                              已催办 {reminderInfo.count}次
+                            </span>
+                          )}
                           {itemFlows.length > 0 && (
                             <button
                               className="inline-flex items-center gap-1 text-2xs text-navy-200 hover:text-navy-400 transition-colors ml-2"
@@ -178,16 +221,28 @@ export default function ExceptionsPage() {
                                   {resignedSent ? '重新发送补签' : '发送补签链接'}
                                 </button>
                                 {resignedSent && (
-                                  <button
-                                    className="btn-success text-xs"
-                                    onClick={() => setPendingAction({
-                                      kind: 'mark_resigned', exceptionId: item.id,
-                                      title: '标记患者已补签', label: '确认标记'
-                                    })}
-                                  >
-                                    <UserCheck className="h-3.5 w-3.5" />
-                                    标记患者已补签
-                                  </button>
+                                  <>
+                                    <button
+                                      className={`text-xs ${reminderInfo.isOverdue ? 'btn-danger' : 'btn-amber'}`}
+                                      onClick={() => setPendingAction({
+                                        kind: 'reminder', exceptionId: item.id,
+                                        title: '再次发送补签提醒', label: '确认发送提醒'
+                                      })}
+                                    >
+                                      <Bell className="h-3.5 w-3.5" />
+                                      催办补签
+                                    </button>
+                                    <button
+                                      className="btn-success text-xs"
+                                      onClick={() => setPendingAction({
+                                        kind: 'mark_resigned', exceptionId: item.id,
+                                        title: '标记患者已补签', label: '确认标记'
+                                      })}
+                                    >
+                                      <UserCheck className="h-3.5 w-3.5" />
+                                      标记患者已补签
+                                    </button>
+                                  </>
                                 )}
                               </>
                             )}
@@ -205,16 +260,28 @@ export default function ExceptionsPage() {
                                   {returnedSent ? '再次退回' : '退回医生补备注'}
                                 </button>
                                 {returnedSent && (
-                                  <button
-                                    className="btn-success text-xs"
-                                    onClick={() => setPendingAction({
-                                      kind: 'mark_noted', exceptionId: item.id,
-                                      title: '标记医生已补说明', label: '确认标记'
-                                    })}
-                                  >
-                                    <Stethoscope className="h-3.5 w-3.5" />
-                                    医生已补说明
-                                  </button>
+                                  <>
+                                    <button
+                                      className={`text-xs ${reminderInfo.isOverdue ? 'btn-danger' : 'btn-amber'}`}
+                                      onClick={() => setPendingAction({
+                                        kind: 'reminder', exceptionId: item.id,
+                                        title: '再次提醒医生补备注', label: '确认发送提醒'
+                                      })}
+                                    >
+                                      <Bell className="h-3.5 w-3.5" />
+                                      催办医生
+                                    </button>
+                                    <button
+                                      className="btn-success text-xs"
+                                      onClick={() => setPendingAction({
+                                        kind: 'mark_noted', exceptionId: item.id,
+                                        title: '标记医生已补说明', label: '确认标记'
+                                      })}
+                                    >
+                                      <Stethoscope className="h-3.5 w-3.5" />
+                                      医生已补说明
+                                    </button>
+                                  </>
                                 )}
                               </>
                             )}
@@ -254,33 +321,44 @@ export default function ExceptionsPage() {
                         <div className="flex items-center gap-1.5 mb-2">
                           <MessageSquare className="h-3.5 w-3.5 text-navy-200" />
                           <span className="text-2xs font-medium text-navy-300">流转记录</span>
+                          {reminderInfo.count > 0 && (
+                            <span className="text-2xs text-amber-500 ml-2">
+                              · 已催办 {reminderInfo.count}次
+                              {reminderInfo.lastReminderAt && ` · 最后催办 ${new Date(reminderInfo.lastReminderAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`}
+                            </span>
+                          )}
                         </div>
                         <div className="space-y-2 pl-4">
-                          {itemFlows.map((flow) => (
-                            <div key={flow.id} className="flex items-start gap-2">
-                              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-navy-50 flex-shrink-0 mt-0.5">
-                                <div className="h-1.5 w-1.5 rounded-full bg-navy-300" />
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-medium text-navy-400">{flow.action}</span>
-                                  <span className="text-2xs text-navy-200">
-                                    {new Date(flow.timestamp).toLocaleString('zh-CN', {
-                                      month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
-                                    })}
-                                  </span>
+                          {itemFlows.map((flow) => {
+                            const isReminder = flow.action.includes('提醒')
+                            return (
+                              <div key={flow.id} className="flex items-start gap-2">
+                                <div className={`flex h-5 w-5 items-center justify-center rounded-full flex-shrink-0 mt-0.5 ${
+                                  isReminder ? 'bg-danger-50' : 'bg-navy-50'
+                                }`}>
+                                  <div className={`h-1.5 w-1.5 rounded-full ${isReminder ? 'bg-danger-400' : 'bg-navy-300'}`} />
                                 </div>
-                                <p className="text-2xs text-navy-200">
-                                  操作人：{flow.operator}（{flow.operatorRole}）
-                                </p>
-                                {flow.note && (
-                                  <p className="text-2xs text-navy-300 mt-0.5 bg-slate-25 rounded px-2 py-1 inline-block">
-                                    备注：{flow.note}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className={`text-xs font-medium ${isReminder ? 'text-danger-500' : 'text-navy-400'}`}>{flow.action}</span>
+                                    <span className="text-2xs text-navy-200">
+                                      {new Date(flow.timestamp).toLocaleString('zh-CN', {
+                                        month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+                                      })}
+                                    </span>
+                                  </div>
+                                  <p className="text-2xs text-navy-200">
+                                    操作人：{flow.operator}（{flow.operatorRole}）
                                   </p>
-                                )}
+                                  {flow.note && (
+                                    <p className="text-2xs text-navy-300 mt-0.5 bg-slate-25 rounded px-2 py-1 inline-block">
+                                      备注：{flow.note}
+                                    </p>
+                                  )}
+                                </div>
                               </div>
-                            </div>
-                          ))}
+                            )
+                          })}
                         </div>
                       </div>
                     )}

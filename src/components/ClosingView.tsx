@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAppStore } from '@/store'
 import { useNavigate } from 'react-router-dom'
 import { FileCheck, XCircle, AlertTriangle, ChevronDown, ChevronRight, CheckCircle2, PenTool, Stethoscope, FileText, Calendar, FileDown, CheckSquare, Send } from 'lucide-react'
@@ -49,6 +49,19 @@ export default function ClosingView() {
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const [reportOpen, setReportOpen] = useState(false)
   const [pendingMark, setPendingMark] = useState<PendingMark | null>(null)
+
+  useEffect(() => {
+    function handleNavigateToDate(e: Event) {
+      const custom = e as CustomEvent<{ date: string; openReport: boolean }>
+      setClosingDate(custom.detail.date)
+      setExpandedKey(null)
+      if (custom.detail.openReport) {
+        setTimeout(() => setReportOpen(true), 100)
+      }
+    }
+    window.addEventListener('navigate-to-date', handleNavigateToDate)
+    return () => window.removeEventListener('navigate-to-date', handleNavigateToDate)
+  }, [])
 
   const closingData = getClosingData(closingDate)
   const existingReport = getReportByDate(closingDate)

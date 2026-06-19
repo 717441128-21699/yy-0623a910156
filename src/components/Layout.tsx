@@ -1,9 +1,10 @@
 import { NavLink, Outlet } from 'react-router-dom'
-import { ClipboardCheck, AlertTriangle, FileSearch, Shield } from 'lucide-react'
+import { ClipboardCheck, AlertTriangle, FileSearch, Shield, BarChart3 } from 'lucide-react'
 
 const navItems = [
   { to: '/review', label: '审查列表', icon: ClipboardCheck },
   { to: '/exceptions', label: '异常处理', icon: AlertTriangle },
+  { to: '/dashboard', label: '关账复盘', icon: BarChart3 },
   { to: '/detail/CR0001', label: '归档详情', icon: FileSearch },
 ]
 
