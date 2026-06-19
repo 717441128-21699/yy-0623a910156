@@ -1,6 +1,6 @@
 import { useParams, useNavigate } from 'react-router-dom'
 import { useAppStore } from '@/store'
-import { ArrowLeft, User, Stethoscope, FileText, Clock, AlertTriangle, PenTool, Shield, CheckCircle2, XCircle } from 'lucide-react'
+import { ArrowLeft, User, Stethoscope, FileText, Clock, AlertTriangle, PenTool, Shield, CheckCircle2, XCircle, MessageSquare } from 'lucide-react'
 import type { SignStatus, ArchiveStatus, ExceptionType } from '@/types'
 
 const signStatusLabel: Record<SignStatus, { text: string; color: string }> = {
@@ -78,21 +78,29 @@ function SignatureCanvas({ label, hasSignature }: { label: string; hasSignature:
 }
 
 function TimelineItem({ log, isLast }: { log: { operator: string; operatorRole: string; action: string; detail: string; timestamp: string }; isLast: boolean }) {
+  const isFlowAction = ['发送补签链接', '退回医生补备注', '标记线下纸质归档', '归档完成'].includes(log.action)
   const actionColorMap: Record<string, string> = {
     '创建同意书': 'bg-navy-300',
     '患者签署': 'bg-success-400',
     '医生确认': 'bg-amber-400',
     '归档完成': 'bg-success-500',
+    '发送补签链接': 'bg-navy-400',
+    '退回医生补备注': 'bg-amber-400',
+    '标记线下纸质归档': 'bg-success-500',
   }
   return (
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
         <div className={`flex h-7 w-7 items-center justify-center rounded-full ${actionColorMap[log.action] || 'bg-navy-200'}`}>
-          <div className="h-2 w-2 rounded-full bg-white" />
+          {isFlowAction ? (
+            <MessageSquare className="h-3 w-3 text-white" />
+          ) : (
+            <div className="h-2 w-2 rounded-full bg-white" />
+          )}
         </div>
         {!isLast && <div className="w-px flex-1 bg-slate-100 my-1" />}
       </div>
-      <div className={`pb-4 ${isLast ? '' : ''}`}>
+      <div className={`pb-4`}>
         <div className="flex items-center gap-2 mb-0.5">
           <span className="text-xs font-medium text-navy-500">{log.action}</span>
           <span className="text-2xs text-navy-200">
@@ -117,11 +125,12 @@ function TimelineItem({ log, isLast }: { log: { operator: string; operatorRole: 
 export default function DetailPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { getRecordById, getSignatureInfo, getRecordLogs } = useAppStore()
+  const { getRecordById, getSignatureInfo, getRecordLogs, getFlowRecordsByRecord, exceptions } = useAppStore()
 
   const record = getRecordById(id || '')
   const signatureInfo = getSignatureInfo(id || '')
   const logs = getRecordLogs(id || '')
+  const flowRecords = getFlowRecordsByRecord(id || '')
 
   if (!record) {
     return (
@@ -138,6 +147,11 @@ export default function DetailPage() {
   }
 
   const isMismatch = record.treatmentItem !== record.chargeItem
+  const isHandled = record.exceptionType && (
+    record.archiveStatus === 'offline_archived' ||
+    record.archiveStatus === 'archived' ||
+    exceptions.find(e => e.recordId === record.id)?.status === 'resolved'
+  )
 
   function formatDateTime(iso: string | null) {
     if (!iso) return '-'
@@ -170,9 +184,13 @@ export default function DetailPage() {
             {archiveStatusLabel[record.archiveStatus].text}
           </span>
           {record.exceptionType && (
-            <span className="badge bg-amber-50 text-amber-400">
-              {exceptionLabel[record.exceptionType]}
-            </span>
+            isHandled ? (
+              <span className="badge bg-success-50 text-success-500">已处理</span>
+            ) : (
+              <span className="badge bg-amber-50 text-amber-400">
+                {exceptionLabel[record.exceptionType]}
+              </span>
+            )
           )}
         </div>
       </div>
@@ -299,6 +317,9 @@ export default function DetailPage() {
             <div className="flex items-center gap-2 mb-4">
               <Clock className="h-4 w-4 text-navy-300" />
               <span className="text-sm font-medium text-navy-500">操作记录</span>
+              {flowRecords.length > 0 && (
+                <span className="badge bg-navy-50 text-navy-300 ml-1">{flowRecords.length}条流转</span>
+              )}
             </div>
             <div className="space-y-0">
               {logs.map((log, i) => (

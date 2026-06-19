@@ -1,9 +1,10 @@
 import { useAppStore } from '@/store'
 import { doctors, treatmentItems } from '@/utils/mockData'
-import { ClipboardCheck, FileCheck, AlertTriangle, Archive, Search, RotateCcw, Download, CheckSquare } from 'lucide-react'
+import { ClipboardCheck, FileCheck, AlertTriangle, Archive, Search, RotateCcw, Download, CheckSquare, CheckCircle2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import type { SignStatus, ArchiveStatus } from '@/types'
-import { useState } from 'react'
+import type { SignStatus, ArchiveStatus, ExceptionType } from '@/types'
+import { useState, useCallback } from 'react'
+import ClosingView from '@/components/ClosingView'
 
 const signStatusMap: Record<SignStatus, { label: string; color: string }> = {
   signed: { label: '已签署', color: 'bg-success-400' },
@@ -23,8 +24,16 @@ const exceptionLabelMap: Record<string, string> = {
   outdated_template: '模板过旧',
 }
 
+function isRecordExceptionHandled(r: { id: string; exceptionType: ExceptionType | null; archiveStatus: ArchiveStatus }, exceptions: { recordId: string; status: string }[]): boolean {
+  if (!r.exceptionType) return false
+  const ex = exceptions.find(e => e.recordId === r.id)
+  if (ex?.status === 'resolved') return true
+  if (r.archiveStatus === 'offline_archived') return true
+  return false
+}
+
 export default function ReviewPage() {
-  const { filters, setFilters, resetFilters, getFilteredRecords, getStats, selectedRecords, toggleSelectRecord, toggleSelectAll, batchArchive, clearSelection } = useAppStore()
+  const { filters, setFilters, resetFilters, getFilteredRecords, getStats, selectedRecords, toggleSelectRecord, toggleSelectAll, batchArchive, clearSelection, exceptions } = useAppStore()
   const navigate = useNavigate()
   const filtered = getFilteredRecords()
   const stats = getStats()
@@ -35,6 +44,16 @@ export default function ReviewPage() {
 
   const allPageIds = paged.map((r) => r.id)
   const allPageSelected = allPageIds.length > 0 && allPageIds.every((id) => selectedRecords.has(id))
+
+  const handleFilterChange = useCallback((partial: Parameters<typeof setFilters>[0]) => {
+    setFilters(partial)
+    setPage(1)
+  }, [setFilters])
+
+  const handleResetFilters = useCallback(() => {
+    resetFilters()
+    setPage(1)
+  }, [resetFilters])
 
   function handleRowClick(id: string) {
     navigate(`/detail/${id}`)
@@ -54,7 +73,7 @@ export default function ReviewPage() {
           <p className="text-xs text-navy-200 mt-1">每日关账前审查签署记录，确保同意书完整合规</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="btn-secondary text-xs" onClick={() => { clearSelection() }}>
+          <button className="btn-secondary text-xs" onClick={handleResetFilters}>
             <RotateCcw className="h-3.5 w-3.5" />
             重置筛选
           </button>
@@ -65,12 +84,15 @@ export default function ReviewPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-4 gap-4">
+      <ClosingView />
+
+      <div className="grid grid-cols-5 gap-4">
         {[
           { icon: ClipboardCheck, label: '总记录', value: stats.total, color: 'text-navy-500', bg: 'bg-navy-50' },
           { icon: FileCheck, label: '待审查', value: stats.pending, color: 'text-amber-400', bg: 'bg-amber-50' },
-          { icon: AlertTriangle, label: '异常项', value: stats.exceptions, color: 'text-danger-500', bg: 'bg-danger-50' },
+          { icon: AlertTriangle, label: '未处理异常', value: stats.exceptions, color: 'text-danger-500', bg: 'bg-danger-50' },
           { icon: Archive, label: '已归档', value: stats.archived, color: 'text-success-500', bg: 'bg-success-50' },
+          { icon: CheckCircle2, label: '已处理', value: stats.processed, color: 'text-navy-300', bg: 'bg-slate-25' },
         ].map((s, i) => (
           <div key={i} className="card px-4 py-3.5 flex items-center gap-3">
             <div className={`flex h-10 w-10 items-center justify-center rounded-lg ${s.bg}`}>
@@ -96,7 +118,7 @@ export default function ReviewPage() {
               type="date"
               className="w-full rounded-md border border-slate-100 bg-slate-25 px-3 py-1.5 text-xs text-navy-500 focus:border-navy-300 focus:outline-none focus:ring-1 focus:ring-navy-200"
               value={filters.dateStart}
-              onChange={(e) => setFilters({ dateStart: e.target.value })}
+              onChange={(e) => handleFilterChange({ dateStart: e.target.value })}
             />
           </div>
           <div>
@@ -105,7 +127,7 @@ export default function ReviewPage() {
               type="date"
               className="w-full rounded-md border border-slate-100 bg-slate-25 px-3 py-1.5 text-xs text-navy-500 focus:border-navy-300 focus:outline-none focus:ring-1 focus:ring-navy-200"
               value={filters.dateEnd}
-              onChange={(e) => setFilters({ dateEnd: e.target.value })}
+              onChange={(e) => handleFilterChange({ dateEnd: e.target.value })}
             />
           </div>
           <div>
@@ -113,7 +135,7 @@ export default function ReviewPage() {
             <select
               className="w-full rounded-md border border-slate-100 bg-slate-25 px-3 py-1.5 text-xs text-navy-500 focus:border-navy-300 focus:outline-none focus:ring-1 focus:ring-navy-200"
               value={filters.doctor}
-              onChange={(e) => setFilters({ doctor: e.target.value })}
+              onChange={(e) => handleFilterChange({ doctor: e.target.value })}
             >
               <option value="">全部医生</option>
               {doctors.map((d) => (
@@ -126,7 +148,7 @@ export default function ReviewPage() {
             <select
               className="w-full rounded-md border border-slate-100 bg-slate-25 px-3 py-1.5 text-xs text-navy-500 focus:border-navy-300 focus:outline-none focus:ring-1 focus:ring-navy-200"
               value={filters.treatmentItem}
-              onChange={(e) => setFilters({ treatmentItem: e.target.value })}
+              onChange={(e) => handleFilterChange({ treatmentItem: e.target.value })}
             >
               <option value="">全部项目</option>
               {treatmentItems.map((t) => (
@@ -141,7 +163,7 @@ export default function ReviewPage() {
               placeholder="搜索患者"
               className="w-full rounded-md border border-slate-100 bg-slate-25 px-3 py-1.5 text-xs text-navy-500 placeholder:text-navy-100 focus:border-navy-300 focus:outline-none focus:ring-1 focus:ring-navy-200"
               value={filters.patientName}
-              onChange={(e) => setFilters({ patientName: e.target.value })}
+              onChange={(e) => handleFilterChange({ patientName: e.target.value })}
             />
           </div>
           <div>
@@ -149,7 +171,7 @@ export default function ReviewPage() {
             <select
               className="w-full rounded-md border border-slate-100 bg-slate-25 px-3 py-1.5 text-xs text-navy-500 focus:border-navy-300 focus:outline-none focus:ring-1 focus:ring-navy-200"
               value={filters.signStatus}
-              onChange={(e) => setFilters({ signStatus: e.target.value as SignStatus | '' })}
+              onChange={(e) => handleFilterChange({ signStatus: e.target.value as SignStatus | '' })}
             >
               <option value="">全部状态</option>
               <option value="signed">已签署</option>
@@ -162,7 +184,7 @@ export default function ReviewPage() {
             <select
               className="w-full rounded-md border border-slate-100 bg-slate-25 px-3 py-1.5 text-xs text-navy-500 focus:border-navy-300 focus:outline-none focus:ring-1 focus:ring-navy-200"
               value={filters.archiveStatus}
-              onChange={(e) => setFilters({ archiveStatus: e.target.value as ArchiveStatus | '' })}
+              onChange={(e) => handleFilterChange({ archiveStatus: e.target.value as ArchiveStatus | '' })}
             >
               <option value="">全部</option>
               <option value="pending">待归档</option>
@@ -218,6 +240,7 @@ export default function ReviewPage() {
             <tbody>
               {paged.map((r, i) => {
                 const isMismatch = r.treatmentItem !== r.chargeItem
+                const handled = isRecordExceptionHandled(r, exceptions)
                 return (
                   <tr
                     key={r.id}
@@ -263,9 +286,15 @@ export default function ReviewPage() {
                     <td className="px-3 py-2.5 text-navy-300">{formatDate(r.signedAt)}</td>
                     <td className="px-3 py-2.5">
                       {r.exceptionType ? (
-                        <span className="badge bg-amber-50 text-amber-400">
-                          {exceptionLabelMap[r.exceptionType]}
-                        </span>
+                        handled ? (
+                          <span className="badge bg-success-50 text-success-500">
+                            已处理
+                          </span>
+                        ) : (
+                          <span className="badge bg-amber-50 text-amber-400">
+                            {exceptionLabelMap[r.exceptionType]}
+                          </span>
+                        )
                       ) : (
                         <span className="text-navy-100">-</span>
                       )}

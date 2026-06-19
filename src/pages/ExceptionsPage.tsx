@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { useAppStore } from '@/store'
-import type { ExceptionType, ExceptionStatus, Urgency } from '@/types'
-import { Send, ArrowLeftRight, Archive, CheckCircle2, Clock, AlertCircle } from 'lucide-react'
+import type { ExceptionType, ExceptionStatus, Urgency, FlowRecord } from '@/types'
+import { Send, ArrowLeftRight, Archive, CheckCircle2, Clock, AlertCircle, ChevronDown, ChevronRight, MessageSquare } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import NoteDialog from '@/components/NoteDialog'
 
 const tabs: { type: ExceptionType; label: string; color: string; borderColor: string }[] = [
   { type: 'missing_patient_signature', label: '待补患者签名', color: 'text-danger-500', borderColor: 'border-danger-400' },
@@ -27,32 +29,58 @@ const typeColorMap: Record<ExceptionType, string> = {
   outdated_template: 'bg-navy-300',
 }
 
+interface PendingAction {
+  exceptionId: string
+  recordId: string
+  action: 'resign' | 'return_doctor' | 'offline_archive'
+}
+
 export default function ExceptionsPage() {
-  const { exceptionTab, setExceptionTab, getExceptionsByType, resolveException, sendResignLink, returnToDoctor, markOfflineArchived } = useAppStore()
+  const { exceptionTab, setExceptionTab, getExceptionsByType, sendResignLink, returnToDoctor, markOfflineArchivedWithNote, flowRecords, exceptions } = useAppStore()
   const navigate = useNavigate()
   const items = getExceptionsByType(exceptionTab)
 
-  const pendingCount = useAppStore().exceptions.filter(e => e.type === 'missing_patient_signature' && e.status !== 'resolved').length
-  const doctorCount = useAppStore().exceptions.filter(e => e.type === 'missing_doctor_note' && e.status !== 'resolved').length
-  const templateCount = useAppStore().exceptions.filter(e => e.type === 'outdated_template' && e.status !== 'resolved').length
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
+  const [expandedFlow, setExpandedFlow] = useState<string | null>(null)
+
+  const pendingCount = exceptions.filter(e => e.type === 'missing_patient_signature' && e.status !== 'resolved').length
+  const doctorCount = exceptions.filter(e => e.type === 'missing_doctor_note' && e.status !== 'resolved').length
+  const templateCount = exceptions.filter(e => e.type === 'outdated_template' && e.status !== 'resolved').length
   const countMap: Record<ExceptionType, number> = {
     missing_patient_signature: pendingCount,
     missing_doctor_note: doctorCount,
     outdated_template: templateCount,
   }
 
-  function handleAction(item: typeof items[0], action: string) {
-    if (action === 'resign') {
-      sendResignLink(item.id)
-    } else if (action === 'return_doctor') {
-      returnToDoctor(item.id)
-    } else if (action === 'offline_archive') {
-      markOfflineArchived(item.recordId)
-      resolveException(item.id, 'offline_archive')
-    } else if (action === 'resolve') {
-      resolveException(item.id, action)
-    }
+  function handleActionClick(item: typeof items[0], action: PendingAction['action']) {
+    setPendingAction({ exceptionId: item.id, recordId: item.recordId, action })
   }
+
+  function handleNoteConfirm(note: string) {
+    if (!pendingAction) return
+    if (pendingAction.action === 'resign') {
+      sendResignLink(pendingAction.exceptionId, note)
+    } else if (pendingAction.action === 'return_doctor') {
+      returnToDoctor(pendingAction.exceptionId, note)
+    } else if (pendingAction.action === 'offline_archive') {
+      markOfflineArchivedWithNote(pendingAction.exceptionId, note)
+    }
+    setPendingAction(null)
+  }
+
+  function getFlowRecordsForException(exceptionId: string): FlowRecord[] {
+    return flowRecords
+      .filter(f => f.exceptionId === exceptionId)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+  }
+
+  const actionLabels: Record<string, { title: string; label: string }> = {
+    resign: { title: '发送补签链接', label: '确认发送' },
+    return_doctor: { title: '退回医生补备注', label: '确认退回' },
+    offline_archive: { title: '标记线下纸质归档', label: '确认归档' },
+  }
+
+  const currentActionLabel = pendingAction ? actionLabels[pendingAction.action] : { title: '', label: '' }
 
   return (
     <div className="p-6 space-y-5">
@@ -93,6 +121,9 @@ export default function ExceptionsPage() {
         ) : (
           items.map((item, i) => {
             const StatusIcon = statusMap[item.status].icon
+            const itemFlows = getFlowRecordsForException(item.id)
+            const isFlowExpanded = expandedFlow === item.id
+
             return (
               <div
                 key={item.id}
@@ -113,6 +144,16 @@ export default function ExceptionsPage() {
                             <StatusIcon className={`h-3.5 w-3.5 ${statusMap[item.status].color}`} />
                             <span className={statusMap[item.status].color}>{statusMap[item.status].label}</span>
                           </span>
+                          {itemFlows.length > 0 && (
+                            <button
+                              className="inline-flex items-center gap-1 text-2xs text-navy-200 hover:text-navy-400 transition-colors ml-2"
+                              onClick={() => setExpandedFlow(isFlowExpanded ? null : item.id)}
+                            >
+                              <MessageSquare className="h-3 w-3" />
+                              {itemFlows.length}条流转
+                              {isFlowExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                            </button>
+                          )}
                         </div>
                         <div className="flex items-center gap-6 text-xs text-navy-300">
                           <span>记录编号：{item.recordId}</span>
@@ -128,7 +169,7 @@ export default function ExceptionsPage() {
                             {exceptionTab === 'missing_patient_signature' && (
                               <button
                                 className="btn-primary text-xs"
-                                onClick={() => handleAction(item, 'resign')}
+                                onClick={() => handleActionClick(item, 'resign')}
                                 disabled={item.status === 'processing'}
                               >
                                 <Send className="h-3.5 w-3.5" />
@@ -138,7 +179,7 @@ export default function ExceptionsPage() {
                             {exceptionTab === 'missing_doctor_note' && (
                               <button
                                 className="btn-amber text-xs"
-                                onClick={() => handleAction(item, 'return_doctor')}
+                                onClick={() => handleActionClick(item, 'return_doctor')}
                                 disabled={item.status === 'processing'}
                               >
                                 <ArrowLeftRight className="h-3.5 w-3.5" />
@@ -148,7 +189,7 @@ export default function ExceptionsPage() {
                             {exceptionTab === 'outdated_template' && (
                               <button
                                 className="btn-success text-xs"
-                                onClick={() => handleAction(item, 'offline_archive')}
+                                onClick={() => handleActionClick(item, 'offline_archive')}
                               >
                                 <Archive className="h-3.5 w-3.5" />
                                 标记线下纸质已归档
@@ -172,6 +213,45 @@ export default function ExceptionsPage() {
                         )}
                       </div>
                     </div>
+
+                    {isFlowExpanded && itemFlows.length > 0 && (
+                      <div className="mt-3 pt-3 border-t border-slate-75 animate-fade-in-up">
+                        <div className="flex items-center gap-1.5 mb-2">
+                          <MessageSquare className="h-3.5 w-3.5 text-navy-200" />
+                          <span className="text-2xs font-medium text-navy-300">流转记录</span>
+                        </div>
+                        <div className="space-y-2 pl-4">
+                          {itemFlows.map((flow) => (
+                            <div key={flow.id} className="flex items-start gap-2">
+                              <div className="flex h-5 w-5 items-center justify-center rounded-full bg-navy-50 flex-shrink-0 mt-0.5">
+                                <div className="h-1.5 w-1.5 rounded-full bg-navy-300" />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-xs font-medium text-navy-400">{flow.action}</span>
+                                  <span className="text-2xs text-navy-200">
+                                    {new Date(flow.timestamp).toLocaleString('zh-CN', {
+                                      month: '2-digit',
+                                      day: '2-digit',
+                                      hour: '2-digit',
+                                      minute: '2-digit',
+                                    })}
+                                  </span>
+                                </div>
+                                <p className="text-2xs text-navy-200">
+                                  操作人：{flow.operator}（{flow.operatorRole}）
+                                </p>
+                                {flow.note && (
+                                  <p className="text-2xs text-navy-300 mt-0.5 bg-slate-25 rounded px-2 py-1 inline-block">
+                                    备注：{flow.note}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -179,6 +259,14 @@ export default function ExceptionsPage() {
           })
         )}
       </div>
+
+      <NoteDialog
+        open={pendingAction !== null}
+        title={currentActionLabel.title}
+        actionLabel={currentActionLabel.label}
+        onClose={() => setPendingAction(null)}
+        onConfirm={handleNoteConfirm}
+      />
     </div>
   )
 }

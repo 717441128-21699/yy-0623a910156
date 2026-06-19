@@ -35,6 +35,17 @@ export interface ExceptionItem {
   resolvedAt: string | null
 }
 
+export interface FlowRecord {
+  id: string
+  exceptionId: string
+  recordId: string
+  action: string
+  operator: string
+  operatorRole: string
+  note: string
+  timestamp: string
+}
+
 export interface OperationLog {
   id: string
   recordId: string
@@ -61,4 +72,13 @@ export interface FilterState {
   patientName: string
   signStatus: SignStatus | ''
   archiveStatus: ArchiveStatus | ''
+}
+
+export interface ClosingCategory {
+  key: string
+  label: string
+  icon: string
+  color: string
+  bgColor: string
+  borderColor: string
 }
