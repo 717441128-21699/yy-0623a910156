@@ -133,11 +133,14 @@ export default function DetailPage() {
   const navigate = useNavigate()
   const { getRecordById, getSignatureInfo, getRecordLogs, getFlowRecordsByRecord, exceptions } = useAppStore()
   const [filterExceptionFlows, setFilterExceptionFlows] = useState(false)
+  const [selectedExceptionId, setSelectedExceptionId] = useState<string>('all')
 
   const record = getRecordById(id || '')
   const signatureInfo = getSignatureInfo(id || '')
   const logs = getRecordLogs(id || '')
   const flowRecords = getFlowRecordsByRecord(id || '')
+
+  const recordExceptions = exceptions.filter(e => e.recordId === (id || ''))
 
   const exceptionFlowActions = new Set([
     '发送补签链接', '退回医生补备注', '标记线下纸质归档', '标记患者已补签',
@@ -146,8 +149,19 @@ export default function DetailPage() {
 
   const displayLogs = useMemo(() => {
     if (!filterExceptionFlows) return logs
-    return logs.filter(log => exceptionFlowActions.has(log.action))
-  }, [logs, filterExceptionFlows, exceptionFlowActions])
+    let filtered = logs.filter(log => exceptionFlowActions.has(log.action))
+    if (selectedExceptionId !== 'all') {
+      const exFlowIds = new Set(
+        flowRecords.filter(f => f.exceptionId === selectedExceptionId).map(f => f.id)
+      )
+      filtered = filtered.filter(log => {
+        if ('exceptionId' in log && (log as any).exceptionId === selectedExceptionId) return true
+        if (exFlowIds.has(log.id)) return true
+        return false
+      })
+    }
+    return filtered
+  }, [logs, filterExceptionFlows, exceptionFlowActions, selectedExceptionId, flowRecords])
 
   if (!record) {
     return (
@@ -339,18 +353,50 @@ export default function DetailPage() {
                   <span className="badge bg-navy-50 text-navy-300 ml-1">{flowRecords.length}条流转</span>
                 )}
               </div>
-              <button
-                className={`inline-flex items-center gap-1 text-2xs px-2 py-1 rounded transition-colors ${
-                  filterExceptionFlows
-                    ? 'bg-navy-500 text-white'
-                    : 'bg-slate-25 text-navy-300 hover:text-navy-500 border border-slate-100'
-                }`}
-                onClick={() => setFilterExceptionFlows(!filterExceptionFlows)}
-              >
-                <Filter className="h-3 w-3" />
-                {filterExceptionFlows ? '显示全部' : '仅看异常流转'}
-              </button>
+              <div className="flex items-center gap-2">
+                {filterExceptionFlows && recordExceptions.length > 1 && (
+                  <select
+                    className="text-2xs rounded border border-navy-200 bg-navy-50 text-navy-500 px-2 py-1 focus:outline-none"
+                    value={selectedExceptionId}
+                    onChange={(e) => setSelectedExceptionId(e.target.value)}
+                  >
+                    <option value="all">全部异常</option>
+                    {recordExceptions.map(ex => (
+                      <option key={ex.id} value={ex.id}>
+                        {ex.type === 'missing_patient_signature' ? '缺患者签名' : ex.type === 'missing_doctor_note' ? '缺医生说明' : '模板过旧'}（{ex.status === 'resolved' ? '已解决' : ex.status === 'processing' ? '处理中' : '待处理'}）
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  className={`inline-flex items-center gap-1 text-2xs px-2 py-1 rounded transition-colors ${
+                    filterExceptionFlows
+                      ? 'bg-navy-500 text-white'
+                      : 'bg-slate-25 text-navy-300 hover:text-navy-500 border border-slate-100'
+                  }`}
+                  onClick={() => {
+                    setFilterExceptionFlows(!filterExceptionFlows)
+                    if (filterExceptionFlows) setSelectedExceptionId('all')
+                  }}
+                >
+                  <Filter className="h-3 w-3" />
+                  {filterExceptionFlows ? '显示全部' : '仅看异常流转'}
+                </button>
+              </div>
             </div>
+            {filterExceptionFlows && selectedExceptionId !== 'all' && (
+              <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-100 rounded-lg">
+                <p className="text-2xs text-amber-500">
+                  当前筛选：{(() => {
+                    const ex = recordExceptions.find(e => e.id === selectedExceptionId)
+                    if (!ex) return ''
+                    const typeLabel = ex.type === 'missing_patient_signature' ? '缺患者签名' : ex.type === 'missing_doctor_note' ? '缺医生说明' : '模板过旧'
+                    return `${typeLabel} - ${ex.patientName}（${ex.status === 'resolved' ? '已解决' : ex.status === 'processing' ? '处理中' : '待处理'}）`
+                  })()}
+                  <span className="text-navy-300 ml-2">显示该异常链路的流转记录，与异常页一致</span>
+                </p>
+              </div>
+            )}
             <div className="space-y-0">
               {displayLogs.length === 0 ? (
                 <p className="text-xs text-navy-200 text-center py-4">暂无相关记录</p>

@@ -3,7 +3,7 @@ import { doctors, treatmentItems } from '@/utils/mockData'
 import { ClipboardCheck, FileCheck, AlertTriangle, Archive, Search, RotateCcw, Download, CheckSquare, CheckCircle2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import type { SignStatus, ArchiveStatus, ExceptionType } from '@/types'
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import ClosingView from '@/components/ClosingView'
 
 const signStatusMap: Record<SignStatus, { label: string; color: string }> = {
@@ -44,6 +44,16 @@ export default function ReviewPage() {
 
   const allPageIds = paged.map((r) => r.id)
   const allPageSelected = allPageIds.length > 0 && allPageIds.every((id) => selectedRecords.has(id))
+
+  useEffect(() => {
+    function handleNavigateToDate(e: Event) {
+      const custom = e as CustomEvent<{ date: string; openReport?: boolean }>
+      setFilters({ dateStart: custom.detail.date, dateEnd: custom.detail.date })
+      setPage(1)
+    }
+    window.addEventListener('navigate-to-date', handleNavigateToDate)
+    return () => window.removeEventListener('navigate-to-date', handleNavigateToDate)
+  }, [setFilters])
 
   const handleFilterChange = useCallback((partial: Parameters<typeof setFilters>[0]) => {
     setFilters(partial)

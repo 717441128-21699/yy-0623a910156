@@ -472,10 +472,37 @@ export const useAppStore = create<AppState>()(
             const r = state.records.find(rec => rec.id === f.recordId)
             if (!r) return
             let category: DailyReport['actionSummary'][0]['category'] | null = null
-            if (r.signStatus === 'unsigned' || r.signStatus === 'partial') category = 'unsigned'
-            else if (r.treatmentItem !== r.chargeItem) category = 'mismatch'
-            else if (!r.doctorConfirmed) category = 'unconfirmed'
-            else if (r.exceptionType === 'outdated_template') category = 'outdated'
+            const relatedEx = f.exceptionId
+              ? state.exceptions.find(e => e.id === f.exceptionId)
+              : null
+            if (relatedEx) {
+              if (relatedEx.type === 'missing_patient_signature') category = 'unsigned'
+              else if (relatedEx.type === 'missing_doctor_note') category = 'unconfirmed'
+              else if (relatedEx.type === 'outdated_template') category = 'outdated'
+            }
+            if (!category) {
+              if (f.action === '标记项目已核对' || f.action === '标记线下纸质归档') {
+                if (r.treatmentItem !== r.chargeItem) category = 'mismatch'
+                else category = 'outdated'
+              } else if (f.action === '标记医生已补说明') {
+                category = 'unconfirmed'
+              } else if (f.action === '标记患者已补签' || f.action === '发送补签链接' || f.action === '再次发送补签提醒') {
+                category = 'unsigned'
+              } else if (f.action === '退回医生补备注' || f.action === '再次提醒医生补备注') {
+                category = 'unconfirmed'
+              } else if (f.action === '归档完成') {
+                if (r.exceptionType === 'outdated_template') category = 'outdated'
+                else if (r.signStatus === 'unsigned' || r.signStatus === 'partial') category = 'unsigned'
+                else if (!r.doctorConfirmed) category = 'unconfirmed'
+                else if (r.treatmentItem !== r.chargeItem) category = 'mismatch'
+                else category = 'outdated'
+              } else {
+                if (r.signStatus === 'unsigned' || r.signStatus === 'partial') category = 'unsigned'
+                else if (r.treatmentItem !== r.chargeItem) category = 'mismatch'
+                else if (!r.doctorConfirmed) category = 'unconfirmed'
+                else if (r.exceptionType === 'outdated_template') category = 'outdated'
+              }
+            }
             if (!category) category = 'unsigned'
             actionSummary.push({
               recordId: r.id,

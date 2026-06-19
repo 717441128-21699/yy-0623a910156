@@ -145,23 +145,3 @@ export interface DailyReportItem {
   timestamp: string
   note: string
 }
-
-export interface DailyReport {
-  id: string
-  date: string
-  generatedAt: string
-  generatedBy: string
-  generatedByRole: string
-  totalRecords: number
-  pendingExceptions: number
-  unsignedCount: number
-  unsignedResolved: number
-  mismatchCount: number
-  mismatchResolved: number
-  unconfirmedCount: number
-  unconfirmedResolved: number
-  outdatedCount: number
-  outdatedResolved: number
-  actionSummary: DailyReportItem[]
-  operatorSummary: { name: string; role: string; count: number }[]
-}

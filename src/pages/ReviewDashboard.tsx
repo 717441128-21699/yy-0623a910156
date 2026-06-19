@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '@/store'
-import { BarChart3, Calendar, ArrowLeft, CheckCircle2, XCircle, Clock, User, Stethoscope, FileText, AlertTriangle } from 'lucide-react'
+import { BarChart3, Calendar, ArrowLeft, CheckCircle2, XCircle, Clock, User, Stethoscope, FileText, AlertTriangle, Bell, ExternalLink } from 'lucide-react'
 
 function todayStr(): string {
   const d = new Date()
@@ -10,7 +10,7 @@ function todayStr(): string {
 
 export default function ReviewDashboard() {
   const navigate = useNavigate()
-  const { getReviewDashboard, getReportByDate, dailyReports, getClosingData } = useAppStore()
+  const { getReviewDashboard, getReportByDate, dailyReports, getClosingData, exceptions, flowRecords, records } = useAppStore()
   const [mode, setMode] = useState<'week' | 'month'>('week')
   const [anchorDate, setAnchorDate] = useState<string>(todayStr())
 
@@ -32,7 +32,11 @@ export default function ReviewDashboard() {
   function handleDayClick(date: string) {
     navigate('/review')
     setTimeout(() => {
-      const evt = new CustomEvent('navigate-to-date', { detail: { date, openReport: true } })
+      const closing = getClosingData(date)
+      const report = dailyReports.find(dr => dr.date === date)
+      const evt = new CustomEvent('navigate-to-date', {
+        detail: { date, openReport: !!report && closing.allResolved }
+      })
       window.dispatchEvent(evt)
     }, 50)
   }
@@ -271,6 +275,162 @@ export default function ReviewDashboard() {
           )}
         </div>
       </div>
+
+      <ReminderEfficiencyView />
+    </div>
+  )
+}
+
+function ReminderEfficiencyView() {
+  const navigate = useNavigate()
+  const { exceptions, flowRecords, records } = useAppStore()
+
+  interface OverdueItem {
+    exception: typeof exceptions[0]
+    mainFlow: typeof flowRecords[0]
+    overdueDays: number
+    reminderCount: number
+    lastReminderAt: string | null
+  }
+
+  const overdueItems: OverdueItem[] = exceptions
+    .filter(ex => ex.status !== 'resolved')
+    .map(ex => {
+      const mainFlow = flowRecords.find(f =>
+        f.exceptionId === ex.id &&
+        (f.action === '发送补签链接' || f.action === '退回医生补备注')
+      )
+      if (!mainFlow) return null
+      const hoursSince = (Date.now() - new Date(mainFlow.timestamp).getTime()) / (1000 * 60 * 60)
+      const overdueDays = Math.floor(hoursSince / 24)
+      if (overdueDays < 1) return null
+      const reminders = flowRecords.filter(f =>
+        f.exceptionId === ex.id &&
+        (f.action === '再次发送补签提醒' || f.action === '再次提醒医生补备注')
+      )
+      const lastReminder = reminders.sort((a, b) =>
+        new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      )[0]
+      return {
+        exception: ex,
+        mainFlow,
+        overdueDays,
+        reminderCount: mainFlow.reminderCount || reminders.length,
+        lastReminderAt: lastReminder?.timestamp || mainFlow.lastReminderAt || null,
+      }
+    })
+    .filter((item): item is OverdueItem => item !== null)
+
+  const doctorOverdue = new Map<string, { name: string; count: number; totalReminders: number; maxOverdue: number }>()
+  overdueItems.forEach(item => {
+    const existing = doctorOverdue.get(item.exception.doctorName) || {
+      name: item.exception.doctorName, count: 0, totalReminders: 0, maxOverdue: 0,
+    }
+    existing.count += 1
+    existing.totalReminders += item.reminderCount
+    existing.maxOverdue = Math.max(existing.maxOverdue, item.overdueDays)
+    doctorOverdue.set(item.exception.doctorName, existing)
+  })
+
+  return (
+    <div className="card px-5 py-4">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Bell className="h-4 w-4 text-danger-400" />
+          <span className="text-sm font-medium text-navy-500">催办效率追踪</span>
+          <span className="text-2xs text-navy-200 ml-1">超1天未闭环的待办事项</span>
+        </div>
+        {overdueItems.length > 0 && (
+          <span className="badge bg-danger-50 text-danger-500">{overdueItems.length}项超期</span>
+        )}
+      </div>
+
+      {overdueItems.length === 0 ? (
+        <div className="text-center py-6">
+          <CheckCircle2 className="h-8 w-8 text-success-300 mx-auto mb-2" />
+          <p className="text-xs text-navy-300">暂无超期未闭环事项</p>
+          <p className="text-2xs text-navy-200 mt-0.5">所有已发出的补签/退回均在1天内完成</p>
+        </div>
+      ) : (
+        <>
+          {doctorOverdue.size > 0 && (
+            <div className="flex flex-wrap gap-2 mb-4">
+              {Array.from(doctorOverdue.values()).sort((a, b) => b.maxOverdue - a.maxOverdue).map(doc => (
+                <div key={doc.name} className="flex items-center gap-2 bg-danger-50 border border-danger-100 rounded-lg px-3 py-2">
+                  <div className="w-5 h-5 rounded-full bg-danger-400 flex items-center justify-center text-[10px] font-bold text-white">
+                    {doc.name.slice(0, 1)}
+                  </div>
+                  <div>
+                    <span className="text-xs font-medium text-danger-500">{doc.name}</span>
+                    <span className="text-2xs text-danger-400 ml-1.5">{doc.count}项超期 · 最多{doc.maxOverdue}天</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-danger-50">
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">患者</th>
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">治疗项目</th>
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">医生</th>
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">异常类型</th>
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">超期天数</th>
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">催办次数</th>
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">最后催办</th>
+                  <th className="px-2 py-2 text-left font-medium text-danger-500">操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {overdueItems
+                  .sort((a, b) => b.overdueDays - a.overdueDays)
+                  .map(item => {
+                    const typeLabel = item.exception.type === 'missing_patient_signature'
+                      ? '待补患者签名' : item.exception.type === 'missing_doctor_note'
+                      ? '待补医生说明' : '模板过旧'
+                    return (
+                      <tr key={item.exception.id} className="border-t border-danger-50">
+                        <td className="px-2 py-2 text-navy-500 font-medium">{item.exception.patientName}</td>
+                        <td className="px-2 py-2 text-navy-400">{item.exception.treatmentItem}</td>
+                        <td className="px-2 py-2 text-navy-400">{item.exception.doctorName}</td>
+                        <td className="px-2 py-2 text-navy-300">{typeLabel}</td>
+                        <td className="px-2 py-2">
+                          <span className={`font-semibold ${item.overdueDays >= 3 ? 'text-danger-500' : item.overdueDays >= 2 ? 'text-amber-500' : 'text-navy-400'}`}>
+                            {item.overdueDays}天
+                          </span>
+                        </td>
+                        <td className="px-2 py-2">
+                          {item.reminderCount > 0 ? (
+                            <span className="text-amber-500 font-medium">{item.reminderCount}次</span>
+                          ) : (
+                            <span className="text-navy-200">未催办</span>
+                          )}
+                        </td>
+                        <td className="px-2 py-2 text-navy-300">
+                          {item.lastReminderAt
+                            ? new Date(item.lastReminderAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+                            : '-'
+                          }
+                        </td>
+                        <td className="px-2 py-2">
+                          <button
+                            className="inline-flex items-center gap-1 text-2xs text-navy-400 hover:text-navy-500 font-medium"
+                            onClick={() => navigate('/exceptions')}
+                          >
+                            <ExternalLink className="h-3 w-3" />
+                            去处理
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   )
 }
